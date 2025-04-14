@@ -1,4 +1,5 @@
 flask
+gunicorn
 youtube-transcript-api
 google-generativeai
 yt-dlp
