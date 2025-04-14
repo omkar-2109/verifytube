@@ -1,8 +1,0 @@
-
-services:
-  - type: web
-    name: verifytube-api
-    env: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn app:application"
-    plan: free
