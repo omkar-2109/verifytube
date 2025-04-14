@@ -1,9 +1,10 @@
 
 import os
 from flask import Flask, request, jsonify
-from your_existing_script import get_video_id, get_transcript, get_transcript_yt_dlp, generate_fact_check
+from backend import get_video_id, get_transcript, get_transcript_yt_dlp, generate_fact_check
 
 app = Flask(__name__)
+application = app  # for gunicorn
 
 @app.route('/predict', methods=['POST'])
 def predict():
