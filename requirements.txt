@@ -1,0 +1,5 @@
+Flask
+gunicorn
+google-genai
+youtube-transcript-api
+yt-dlp
