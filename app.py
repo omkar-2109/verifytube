@@ -3,6 +3,7 @@ from flask_cors import CORS
 from backend import get_video_id, get_transcript, get_transcript_yt_dlp, generate_fact_check
 
 app = Flask(__name__)
+CORS(app, origins="chrome-extension://pohnlnkideolhcmndnnddepnboapnhpm")
 
 @app.route("/")
 def index():
