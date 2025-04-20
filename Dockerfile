@@ -5,7 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 COPY app.py .
 COPY backend.py .
-COPY cookies.txt /app/cookies.txt .
+COPY cookies.txt .
 
 RUN apt-get update && apt-get install -y \
     ffmpeg \
