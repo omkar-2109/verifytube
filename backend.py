@@ -41,7 +41,7 @@ def get_transcript(video_id):
 def get_transcript_youtube_api(video_id):
     """Fetches captions metadata using YouTube Data API v3."""
     try:
-        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        youtube = build("youtube", "v3")
         response = youtube.captions().list(
             part="snippet",
             videoId=video_id
