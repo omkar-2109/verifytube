@@ -6,9 +6,11 @@ from yt_dlp import YoutubeDL
 from googleapiclient.discovery import build
 from urllib.parse import urlparse, parse_qs
 import requests
+import os
+
 
 # 🔐 Your YouTube Data API Key
-YOUTUBE_API_KEY = "AIzaSyC4q4CGWyc4m0hrBgdVO8SuxBEHZmniF3Q"
+YOUTUBE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 def get_video_id(url):
     """Extracts video ID from a YouTube URL."""
