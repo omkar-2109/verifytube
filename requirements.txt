@@ -1,5 +1,6 @@
 Flask
 flask-cors
+gunicorn
 google-api-python-client
 youtube-transcript-api
 yt-dlp
