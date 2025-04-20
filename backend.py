@@ -68,7 +68,7 @@ def get_transcript_yt_dlp(video_url):
     try:
         ydl_opts = {
             'quiet': True,
-            'cookiefile': '/app/cookies.txt',  # Ensure this matches your Docker location
+            'cookiefile': 'cookies.txt',  # Ensure this matches your Docker location
             'skip_download': True,
             'writesubtitles': True,
             'writeautomaticsub': True,
