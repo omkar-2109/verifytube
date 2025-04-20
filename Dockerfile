@@ -2,6 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+COPY requirements.txt .
+COPY app.py .
+COPY backend.py .
+COPY cookies.txt .
+
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
@@ -10,6 +15,5 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
 
 CMD ["gunicorn", "-b", "0.0.0.0:8080", "app:app"]
