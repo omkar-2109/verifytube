@@ -1,8 +1,8 @@
 import re
-import subprocess
 from google import genai
 from google.genai import types
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
+from yt_dlp import YoutubeDL
 
 def get_video_id(url):
     pattern = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
@@ -29,18 +29,33 @@ def get_transcript(video_id):
 
 def get_transcript_yt_dlp(video_url):
     try:
-        command = [
-            "yt-dlp", "--write-auto-sub", "--sub-lang", "en", "--skip-download",
-            "--print-to-file", "%(autonumber)s", "subtitles.txt", video_url
-        ]
-        subprocess.run(command, check=True)
+        ydl_opts = {
+            'quiet': True,
+            'skip_download': True,
+            'writesubtitles': True,
+            'writeautomaticsub': True,
+            'subtitleslangs': ['en'],
+            'cookiefile': 'cookies.txt',
+        }
 
-        with open("subtitles.txt", "r", encoding="utf-8") as f:
-            transcript = f.read()
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            subtitles = info.get('automatic_captions', {}).get('en')
+            if not subtitles:
+                print("No subtitles found in info dict.")
+                return None
 
-        return transcript.strip() if transcript else None
+            # Download subtitles manually using requested URL
+            for sub in subtitles:
+                if sub.get('ext') == 'vtt':
+                    import requests
+                    response = requests.get(sub['url'])
+                    if response.ok:
+                        return response.text
+
+        return None
     except Exception as e:
-        print("Error fetching transcript using yt-dlp:", e)
+        print("Error fetching transcript using yt-dlp with cookies:", e)
         return None
 
 def generate_fact_check(transcript):
