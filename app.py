@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import os
 from backend import (
     get_video_id,
     get_transcript,
@@ -31,7 +30,7 @@ def fact_check():
     # Try youtube_transcript_api
     transcript = get_transcript(video_id)
 
-    # If not available, try YouTube Data API (caption metadata)
+    # If not available, try YouTube Data API
     if not transcript:
         transcript = get_transcript_youtube_api(video_id)
 
@@ -45,8 +44,7 @@ def fact_check():
     result = generate_fact_check(transcript)
     return jsonify({"result": result})
 
+# Optional: remove this block if using gunicorn
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))  # required for Cloud Run
-    app.run(host="0.0.0.0", port=port, debug=True)
-
-
+    import os
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=True)
