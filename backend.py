@@ -4,7 +4,6 @@ import requests
 from googleapiclient.discovery import build
 import google.generativeai as genai
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
-from yt_dlp import YoutubeDL
 
 YOUTUBE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
@@ -40,33 +39,6 @@ def get_transcript_youtube_api(video_id):
         return caption.get("body", "").strip()
     except Exception as e:
         print("YouTube API error:", e)
-        return None
-
-def get_transcript_yt_dlp(video_url):
-    try:
-        ydl_opts = {
-            'quiet': True,
-            'skip_download': True,
-            'writesubtitles': True,
-            'writeautomaticsub': True,
-            'subtitleslangs': ['en'],
-            'cookiefile': 'cookies.txt',
-        }
-
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            subtitles = info.get('automatic_captions', {}).get('en')
-            if not subtitles:
-                return None
-
-            for sub in subtitles:
-                if sub.get('ext') == 'vtt':
-                    response = requests.get(sub['url'])
-                    if response.ok:
-                        return response.text.replace('\n', ' ').strip()
-        return None
-    except Exception as e:
-        print("yt-dlp error:", e)
         return None
 
 def generate_fact_check(transcript):
