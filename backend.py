@@ -9,8 +9,8 @@ import requests
 import os
 
 
-api_key = os.getenv("GOOGLE_API_KEY")
-if not api_key:
+YOUTUBE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not YOUTUBE_API_KEY:
     raise ValueError("Missing GOOGLE_API_KEY in environment variables.")
 
 def get_video_id(url):
