@@ -35,8 +35,6 @@ def fact_check():
         transcript = get_transcript_youtube_api(video_id)
 
     # If still not found, try yt-dlp with cookies
-    if not transcript:
-        transcript = get_transcript_yt_dlp(video_url)
 
     if not transcript:
         return jsonify({"error": "Could not retrieve transcript"}), 500
