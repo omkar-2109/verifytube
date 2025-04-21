@@ -1,10 +1,13 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from backend import (
+    verify_token,
     get_video_id,
-    get_transcript_youtube_api,
-    generate_fact_check
+    get_transcript,
+    generate_fact_check,
+    user_video_history,
 )
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app, origins="chrome-extension://pohnlnkideolhcmndnnddepnboapnhpm")
@@ -15,51 +18,56 @@ def index():
 
 @app.route("/fact-check", methods=["POST"])
 def fact_check():
-    try:
-        data = request.get_json()
-        video_url = data.get("url")
-        print("[INFO] Received URL:", video_url)
+    data = request.get_json()
+    url = data.get("url")
+    token = data.get("token")
 
-        if not video_url:
-            return jsonify({"error": "No URL provided"}), 400
+    if not url or not token:
+        return jsonify({"error": "Missing video URL or login token"}), 400
 
-        video_id = get_video_id(video_url)
-        print("[INFO] Extracted video ID:", video_id)
+    user_email = verify_token(token)
+    if not user_email:
+        return jsonify({"error": "Invalid login token"}), 401
 
-        if not video_id:
-            return jsonify({"error": "Invalid YouTube URL"}), 400
+    video_id = get_video_id(url)
+    if not video_id:
+        return jsonify({"error": "Invalid YouTube URL"}), 400
 
-        transcript = get_transcript(video_id)
-        print("[INFO] Got transcript from youtube_transcript_api:", bool(transcript))
+    print(f"[INFO] User: {user_email} | Video ID: {video_id}")
+    transcript = get_transcript(video_id)
 
-        if not transcript:
-            transcript = get_transcript_youtube_api(video_id)
-            print("[INFO] Got transcript from YouTube API:", bool(transcript))
+    if not transcript:
+        return jsonify({"error": "Transcript unavailable"}), 404
 
-        if not transcript:
-            return jsonify({"error": "Could not retrieve transcript"}), 500
+    # Save history
+    user_history = user_video_history.setdefault(user_email, [])
+    if not any(item["video_id"] == video_id for item in user_history):
+        user_history.append({
+            "video_id": video_id,
+            "url": url,
+            "title": "Fetched on " + datetime.utcnow().isoformat(),
+            "timestamp": datetime.utcnow().isoformat()
+        })
 
-        result = generate_fact_check(transcript)
-        print("[INFO] Gemini result:", result[:100])  # just first 100 chars
+    # Simulated fact-check
+    summary = generate_fact_check(transcript)
 
-        return jsonify({"result": result})
-
-    except Exception as e:
-        import traceback
-        print("[ERROR] Exception occurred:")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/debug")
-def debug():
     return jsonify({
-        "status": "ok",
-        "youtube_api_key": bool(os.environ.get("YOUTUBE_API_KEY")),
-        "genai_configured": hasattr(genai, "Client")
+        "video_id": video_id,
+        "transcript": transcript,
+        "fact_check": summary,
+        "message": "Transcript fetched successfully"
     })
 
 
-# Optional: remove this block if using gunicorn
-if __name__ == "__main__":
-    import os
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=True)
+@app.route("/history", methods=["POST"])
+def get_history():
+    data = request.get_json()
+    token = data.get("token")
+    user_email = verify_token(token)
+
+    if not user_email:
+        return jsonify({"error": "Invalid login token"}), 401
+
+    history = user_video_history.get(user_email, [])
+    return jsonify({"email": user_email, "history": history})
