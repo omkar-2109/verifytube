@@ -51,6 +51,14 @@ def fact_check():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route("/debug")
+def debug():
+    return jsonify({
+        "status": "ok",
+        "youtube_api_key": bool(os.environ.get("YOUTUBE_API_KEY")),
+        "genai_configured": hasattr(genai, "Client")
+    })
+
 
 # Optional: remove this block if using gunicorn
 if __name__ == "__main__":
