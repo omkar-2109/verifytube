@@ -29,17 +29,31 @@ def get_transcript(video_id):
 
 def get_transcript_youtube_api(video_id):
     try:
-        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-        captions = youtube.captions().list(part="id", videoId=video_id).execute()
-        caption_items = captions.get("items", [])
-        if not caption_items:
+        api_key = os.environ.get("YOUTUBE_API_KEY")
+        print("[INFO] YOUTUBE_API_KEY present:", bool(api_key))
+        if not api_key:
             return None
-        caption_id = caption_items[0]["id"]
-        caption = youtube.captions().download(id=caption_id).execute()
-        return caption.get("body", "").strip()
+
+        youtube = build("youtube", "v3", developerKey=api_key)
+        print("[INFO] YouTube API client initialized.")
+
+        captions = youtube.captions().list(part="snippet", videoId=video_id).execute()
+        print("[INFO] Captions fetched:", captions)
+
+        if not captions.get("items"):
+            print("[INFO] No caption items found.")
+            return None
+
+        caption_id = captions["items"][0]["id"]
+        print("[INFO] Caption ID:", caption_id)
+
+        caption_response = youtube.captions().download(id=caption_id).execute()
+        return caption_response.decode("utf-8")
+
     except Exception as e:
-        print("YouTube API error:", e)
+        print("[ERROR] YouTube API Exception:", str(e))
         return None
+
 
 def generate_fact_check(transcript):
     client = genai.Client(
