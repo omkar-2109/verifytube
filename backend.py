@@ -5,7 +5,6 @@ from googleapiclient.discovery import build
 import google.generativeai as genai
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
 
-YOUTUBE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 def get_video_id(url):
     pattern = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
@@ -56,6 +55,7 @@ def get_transcript_youtube_api(video_id):
 
 
 def generate_fact_check(transcript):
+    
     client = genai.Client(
         vertexai=True,
         project="skillful-cider-451510-j7",
