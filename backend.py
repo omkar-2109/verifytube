@@ -1,130 +1,110 @@
 import re
+import os
+import requests
+from googleapiclient.discovery import build
 import google.generativeai as genai
-from google.genai import types
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
 from yt_dlp import YoutubeDL
-from googleapiclient.discovery import build
-from urllib.parse import urlparse, parse_qs
-import requests
-import os
-
 
 YOUTUBE_API_KEY = os.getenv("GOOGLE_API_KEY")
-if not YOUTUBE_API_KEY:
-    raise ValueError("Missing GOOGLE_API_KEY in environment variables.")
 
 def get_video_id(url):
-    """Extracts video ID from a YouTube URL."""
-    parsed_url = urlparse(url)
-    if parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
-        return parse_qs(parsed_url.query).get("v", [None])[0]
-    elif parsed_url.hostname == "youtu.be":
-        return parsed_url.path.lstrip("/")
-    return None
+    pattern = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
+    match = re.search(pattern, url)
+    return match.group(1) if match else None
 
 def get_transcript(video_id):
-    """Attempts to fetch the transcript using youtube_transcript_api."""
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en-US'])
         return " ".join([entry['text'] for entry in transcript_list])
     except TranscriptsDisabled:
-        print("Transcripts are disabled for this video.")
         return None
-    except Exception as e:
-        print(f"Error fetching transcript in 'en-US': {e}")
+    except Exception:
+        pass
 
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['hi'])
         return " ".join([entry['text'] for entry in transcript_list])
-    except Exception as e:
-        print(f"Error fetching transcript in 'hi': {e}")
-
-    return None
-
-def get_transcript_youtube_api(video_id):
-    """Fetches captions metadata using YouTube Data API v3."""
-    try:
-        youtube = build("youtube", "v3")
-        response = youtube.captions().list(
-            part="snippet",
-            videoId=video_id
-        ).execute()
-
-        if not response.get("items"):
-            print("No captions found via YouTube API.")
-            return None
-
-        for item in response["items"]:
-            snippet = item["snippet"]
-            if snippet.get("language") == "en" and snippet.get("trackKind") != "ASR":
-                return f"Captions available in '{snippet['language']}' — manually uploaded."
-
-        print("Only auto-captions or non-English captions available.")
+    except Exception:
         return None
 
+def get_transcript_youtube_api(video_id):
+    try:
+        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        captions = youtube.captions().list(part="id", videoId=video_id).execute()
+        caption_items = captions.get("items", [])
+        if not caption_items:
+            return None
+        caption_id = caption_items[0]["id"]
+        caption = youtube.captions().download(id=caption_id).execute()
+        return caption.get("body", "").strip()
     except Exception as e:
-        print("Error using YouTube Data API for captions:", e)
+        print("YouTube API error:", e)
         return None
 
 def get_transcript_yt_dlp(video_url):
-    """Fallback using yt-dlp + cookies to fetch auto-generated captions."""
     try:
         ydl_opts = {
             'quiet': True,
-            'cookiefile': 'cookies.txt',  # Ensure this matches your Docker location
             'skip_download': True,
             'writesubtitles': True,
             'writeautomaticsub': True,
             'subtitleslangs': ['en'],
+            'cookiefile': 'cookies.txt',
         }
 
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
             subtitles = info.get('automatic_captions', {}).get('en')
             if not subtitles:
-                print("No automatic captions found via yt-dlp.")
                 return None
 
             for sub in subtitles:
                 if sub.get('ext') == 'vtt':
-                    print("Downloading subtitle file from:", sub['url'])
                     response = requests.get(sub['url'])
                     if response.ok:
-                        return response.text
-
+                        return response.text.replace('\n', ' ').strip()
         return None
     except Exception as e:
-        print("Error fetching transcript using yt-dlp with cookies:", e)
+        print("yt-dlp error:", e)
         return None
 
 def generate_fact_check(transcript):
-    """Uses Gemini Pro to generate a fact-checking report."""
-    client = genai.Client(vertexai=True, project="skillful-cider-451510-j7", location="us-central1")
+    client = genai.Client(
+        vertexai=True,
+        project="skillful-cider-451510-j7",
+        location="us-central1"
+    )
 
-    text1 = types.Part.from_text(text=f"""
-    You are a fact-checking AI. Your task is to extract ONLY news-related claims from the given YouTube transcript.
-    For each claim, verify its accuracy and provide credible sources with links.
+    prompt = f"""
+You are a fact-checking AI. Extract news-related claims from the following transcript, verify their accuracy, and respond in JSON format:
+{{
+  "claims": ["claim 1", "claim 2", ...],
+  "verdicts": ["true", "false", "misleading", ...]
+}}
 
-    **YouTube Transcript:** {transcript}
-    """)
+Transcript:
+\"\"\"
+{transcript}
+\"\"\"
+"""
 
     model = "gemini-2.5-pro-exp-03-25"
-    contents = [types.Content(role="user", parts=[text1])]
-    tools = [types.Tool(google_search=types.GoogleSearch())]
-
-    config = types.GenerateContentConfig(
+    contents = [genai.types.Content(role="user", parts=[genai.types.Part.from_text(prompt)])]
+    tools = [genai.types.Tool(google_search=genai.types.GoogleSearch())]
+    config = genai.types.GenerateContentConfig(
         temperature=0,
         top_p=1,
         seed=0,
-        max_output_tokens=65535,
+        max_output_tokens=4096,
         response_modalities=["TEXT"],
         tools=tools,
-        system_instruction=[types.Part.from_text(text="You are a precise fact-checker. Extract only news claims.")]
+        system_instruction=[genai.types.Part.from_text("You are a precise fact-checker.")]
     )
 
-    result_text = ""
+    response_text = ""
     for chunk in client.models.generate_content_stream(model=model, contents=contents, config=config):
         if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
-            result_text += chunk.text
+            response_text += chunk.text
 
-    return result_text.strip() if result_text else "No fact-check results."
+    return response_text.strip()
