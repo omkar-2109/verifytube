@@ -9,8 +9,9 @@ import requests
 import os
 
 
-# 🔐 Your YouTube Data API Key
-YOUTUBE_API_KEY = os.getenv("GOOGLE_API_KEY")
+api_key = os.getenv("GOOGLE_API_KEY")
+if not api_key:
+    raise ValueError("Missing GOOGLE_API_KEY in environment variables.")
 
 def get_video_id(url):
     """Extracts video ID from a YouTube URL."""
