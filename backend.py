@@ -1,72 +1,96 @@
+import re
 import os
-import json
-from datetime import datetime
-
-from flask import jsonify, request
-from google.auth.transport import requests as grequests
-from google.oauth2 import id_token
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+import requests
 from googleapiclient.discovery import build
-
-# In-memory history
-user_video_history = {}
-
-# Constants
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
-YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
-
-
-def verify_token(token):
-    try:
-        idinfo = id_token.verify_oauth2_token(token, grequests.Request(), GOOGLE_CLIENT_ID)
-        return idinfo["email"]
-    except Exception as e:
-        print(f"[ERROR] Token verification failed: {e}")
-        return None
+import google.generativeai as genai
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
 
 
 def get_video_id(url):
-    if "v=" in url:
-        return url.split("v=")[1].split("&")[0]
-    elif "youtu.be/" in url:
-        return url.split("youtu.be/")[1].split("?")[0]
-    return None
-
-
-def fetch_transcript(video_id):
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        text = " ".join([entry["text"] for entry in transcript])
-        print("[INFO] Transcript fetched using youtube_transcript_api.")
-        return text
-    except (TranscriptsDisabled, NoTranscriptFound) as e:
-        print(f"[WARNING] No transcript via youtube_transcript_api: {e}")
-        return None
-
-
-def fetch_caption_with_api(video_id):
-    try:
-        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-        captions = youtube.captions().list(part="snippet", videoId=video_id).execute()
-        if not captions["items"]:
-            return None
-        caption_id = captions["items"][0]["id"]
-        print(f"[INFO] Caption found (ID: {caption_id}), but API key alone cannot fetch text.")
-        return None
-    except Exception as e:
-        print(f"[ERROR] YouTube API caption fetch failed: {e}")
-        return None
-
+    pattern = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
+    match = re.search(pattern, url)
+    return match.group(1) if match else None
 
 def get_transcript(video_id):
-    transcript = fetch_transcript(video_id)
-    if not transcript:
-        transcript = fetch_caption_with_api(video_id)
-    return transcript
+    try:
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en-US'])
+        return " ".join([entry['text'] for entry in transcript_list])
+    except TranscriptsDisabled:
+        return None
+    except Exception:
+        pass
+
+    try:
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['hi'])
+        return " ".join([entry['text'] for entry in transcript_list])
+    except Exception:
+        return None
+
+def get_transcript_youtube_api(video_id):
+    try:
+        api_key = os.environ.get("YOUTUBE_API_KEY")
+        print("[INFO] YOUTUBE_API_KEY present:", bool(api_key))
+        if not api_key:
+            return None
+
+        youtube = build("youtube", "v3", developerKey=api_key)
+        print("[INFO] YouTube API client initialized.")
+
+        captions = youtube.captions().list(part="snippet", videoId=video_id).execute()
+        print("[INFO] Captions fetched:", captions)
+
+        if not captions.get("items"):
+            print("[INFO] No caption items found.")
+            return None
+
+        caption_id = captions["items"][0]["id"]
+        print("[INFO] Caption ID:", caption_id)
+
+        caption_response = youtube.captions().download(id=caption_id).execute()
+        return caption_response.decode("utf-8")
+
+    except Exception as e:
+        print("[ERROR] YouTube API Exception:", str(e))
+        return None
 
 
 def generate_fact_check(transcript):
-    if not transcript:
-        return None
-    # Placeholder Gemini logic
-    return f"Fact-check summary: [Simulated] This transcript contains {len(transcript.split())} words."
+    
+    client = genai.Client(
+        vertexai=True,
+        project="skillful-cider-451510-j7",
+        location="us-central1"
+    )
+
+    prompt = f"""
+You are a fact-checking AI. Extract news-related claims from the following transcript, verify their accuracy, and respond in JSON format:
+{{
+  "claims": ["claim 1", "claim 2", ...],
+  "verdicts": ["true", "false", "misleading", ...]
+}}
+
+Transcript:
+\"\"\"
+{transcript}
+\"\"\"
+"""
+
+    model = "gemini-2.5-pro-exp-03-25"
+    contents = [genai.types.Content(role="user", parts=[genai.types.Part.from_text(prompt)])]
+    tools = [genai.types.Tool(google_search=genai.types.GoogleSearch())]
+    config = genai.types.GenerateContentConfig(
+        temperature=0,
+        top_p=1,
+        seed=0,
+        max_output_tokens=4096,
+        response_modalities=["TEXT"],
+        tools=tools,
+        system_instruction=[genai.types.Part.from_text("You are a precise fact-checker.")]
+    )
+
+    response_text = ""
+    for chunk in client.models.generate_content_stream(model=model, contents=contents, config=config):
+        if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
+            response_text += chunk.text
+
+    return response_text.strip()
