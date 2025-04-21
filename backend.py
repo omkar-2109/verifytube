@@ -1,96 +1,116 @@
-import re
 import os
-import requests
+import json
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from google.auth.transport import requests as grequests
+from google.oauth2 import id_token
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from googleapiclient.discovery import build
-import google.generativeai as genai
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
+from datetime import datetime
+
+app = Flask(__name__)
+CORS(app)
+
+# In-memory user data store
+user_video_history = {}
+
+# Constants
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
+
+
+def verify_token(token):
+    try:
+        idinfo = id_token.verify_oauth2_token(token, grequests.Request(), GOOGLE_CLIENT_ID)
+        return idinfo["email"]
+    except Exception as e:
+        print(f"[ERROR] Token verification failed: {e}")
+        return None
 
 
 def get_video_id(url):
-    pattern = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
-    match = re.search(pattern, url)
-    return match.group(1) if match else None
+    if "v=" in url:
+        return url.split("v=")[1].split("&")[0]
+    elif "youtu.be/" in url:
+        return url.split("youtu.be/")[1].split("?")[0]
+    return None
 
-def get_transcript(video_id):
-    try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en-US'])
-        return " ".join([entry['text'] for entry in transcript_list])
-    except TranscriptsDisabled:
-        return None
-    except Exception:
-        pass
 
+def fetch_transcript(video_id):
     try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['hi'])
-        return " ".join([entry['text'] for entry in transcript_list])
-    except Exception:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        text = " ".join([entry["text"] for entry in transcript])
+        print("[INFO] Transcript fetched using youtube_transcript_api.")
+        return text
+    except (TranscriptsDisabled, NoTranscriptFound) as e:
+        print(f"[WARNING] No transcript via youtube_transcript_api: {e}")
         return None
 
-def get_transcript_youtube_api(video_id):
+
+def fetch_caption_with_api(video_id):
     try:
-        api_key = os.environ.get("YOUTUBE_API_KEY")
-        print("[INFO] YOUTUBE_API_KEY present:", bool(api_key))
-        if not api_key:
-            return None
-
-        youtube = build("youtube", "v3", developerKey=api_key)
-        print("[INFO] YouTube API client initialized.")
-
+        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
         captions = youtube.captions().list(part="snippet", videoId=video_id).execute()
-        print("[INFO] Captions fetched:", captions)
-
-        if not captions.get("items"):
-            print("[INFO] No caption items found.")
-            return None
-
         caption_id = captions["items"][0]["id"]
-        print("[INFO] Caption ID:", caption_id)
 
-        caption_response = youtube.captions().download(id=caption_id).execute()
-        return caption_response.decode("utf-8")
-
+        print("[INFO] Caption ID found, but API key can't access caption body without OAuth.")
+        return None  # Can't fetch body with just API key
     except Exception as e:
-        print("[ERROR] YouTube API Exception:", str(e))
+        print(f"[ERROR] YouTube API failed to get caption: {e}")
         return None
 
 
-def generate_fact_check(transcript):
-    
-    client = genai.Client(
-        vertexai=True,
-        project="skillful-cider-451510-j7",
-        location="us-central1"
-    )
+@app.route("/fact-check", methods=["POST"])
+def fact_check():
+    data = request.get_json()
+    url = data.get("url")
+    token = data.get("token")
 
-    prompt = f"""
-You are a fact-checking AI. Extract news-related claims from the following transcript, verify their accuracy, and respond in JSON format:
-{{
-  "claims": ["claim 1", "claim 2", ...],
-  "verdicts": ["true", "false", "misleading", ...]
-}}
+    if not url or not token:
+        return jsonify({"error": "Missing video URL or login token"}), 400
 
-Transcript:
-\"\"\"
-{transcript}
-\"\"\"
-"""
+    user_email = verify_token(token)
+    if not user_email:
+        return jsonify({"error": "Invalid login token"}), 401
 
-    model = "gemini-2.5-pro-exp-03-25"
-    contents = [genai.types.Content(role="user", parts=[genai.types.Part.from_text(prompt)])]
-    tools = [genai.types.Tool(google_search=genai.types.GoogleSearch())]
-    config = genai.types.GenerateContentConfig(
-        temperature=0,
-        top_p=1,
-        seed=0,
-        max_output_tokens=4096,
-        response_modalities=["TEXT"],
-        tools=tools,
-        system_instruction=[genai.types.Part.from_text("You are a precise fact-checker.")]
-    )
+    video_id = get_video_id(url)
+    if not video_id:
+        return jsonify({"error": "Invalid YouTube URL"}), 400
 
-    response_text = ""
-    for chunk in client.models.generate_content_stream(model=model, contents=contents, config=config):
-        if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
-            response_text += chunk.text
+    print(f"[INFO] User: {user_email} | Video ID: {video_id}")
 
-    return response_text.strip()
+    transcript = fetch_transcript(video_id)
+    if not transcript:
+        transcript = fetch_caption_with_api(video_id)
+
+    if not transcript:
+        return jsonify({"error": "Transcript unavailable"}), 404
+
+    # Save history
+    user_history = user_video_history.setdefault(user_email, [])
+    if not any(item["video_id"] == video_id for item in user_history):
+        user_history.append({
+            "video_id": video_id,
+            "url": url,
+            "title": "Fetched on " + datetime.utcnow().isoformat(),
+            "timestamp": datetime.utcnow().isoformat()
+        })
+
+    return jsonify({
+        "video_id": video_id,
+        "transcript": transcript,
+        "message": "Transcript fetched successfully"
+    })
+
+
+@app.route("/history", methods=["POST"])
+def get_history():
+    data = request.get_json()
+    token = data.get("token")
+    user_email = verify_token(token)
+
+    if not user_email:
+        return jsonify({"error": "Invalid login token"}), 401
+
+    history = user_video_history.get(user_email, [])
+    return jsonify({"email": user_email, "history": history})
