@@ -1,5 +1,5 @@
 import re
-from google import genai
+import google.generativeai as genai
 from google.genai import types
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
 from yt_dlp import YoutubeDL
