@@ -1,6 +1,8 @@
 Flask
 flask-cors
 gunicorn
+google-auth
+google-auth-oauthlib
 google-api-python-client
 youtube-transcript-api
 google-generativeai
