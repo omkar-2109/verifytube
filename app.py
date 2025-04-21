@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from backend import (
     get_video_id,
-    get_transcript,
     get_transcript_youtube_api,
     generate_fact_check
 )
