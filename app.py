@@ -1,3 +1,4 @@
+import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from backend import (
@@ -8,59 +9,45 @@ from backend import (
 )
 
 app = Flask(__name__)
-CORS(app, origins="chrome-extension://pohnlnkideolhcmndnnddepnboapnhpm")
 
-@app.route("/")
+# Allow your extension or localhost to call
+origins = os.environ.get("CORS_ORIGINS",
+                         "chrome-extension://pohnlnkideolhcmndnnddepnboapnhpm")
+CORS(app, origins=origins)
+
+@app.route("/", methods=["GET"])
 def index():
-    return "✅ VerifyTube Backend is running!"
+    return "✅ VerifyTube Backend is running!", 200
 
 @app.route("/fact-check", methods=["POST"])
 def fact_check():
+    data = request.get_json() or {}
+    video_url = data.get("url", "").strip()
+    if not video_url:
+        return jsonify({"error": "No URL provided"}), 400
+
+    vid = get_video_id(video_url)
+    if not vid:
+        return jsonify({"error": "Invalid YouTube URL"}), 400
+
+    # Try transcripts
+    transcript = get_transcript(vid)
+    if not transcript:
+        transcript = get_transcript_youtube_api(vid)
+    if not transcript:
+        return jsonify({"error": "Could not retrieve transcript"}), 500
+
+    # Run fact-check
     try:
-        data = request.get_json()
-        video_url = data.get("url")
-        print("[INFO] Received URL:", video_url)
-
-        if not video_url:
-            return jsonify({"error": "No URL provided"}), 400
-
-        video_id = get_video_id(video_url)
-        print("[INFO] Extracted video ID:", video_id)
-
-        if not video_id:
-            return jsonify({"error": "Invalid YouTube URL"}), 400
-
-        transcript = get_transcript(video_id)
-        print("[INFO] Got transcript from youtube_transcript_api:", bool(transcript))
-
-        if not transcript:
-            transcript = get_transcript_youtube_api(video_id)
-            print("[INFO] Got transcript from YouTube API:", bool(transcript))
-
-        if not transcript:
-            return jsonify({"error": "Could not retrieve transcript"}), 500
-
         result = generate_fact_check(transcript)
-        print("[INFO] Gemini result:", result[:100])  # just first 100 chars
-
-        return jsonify({"result": result})
-
-    except Exception as e:
-        import traceback
-        print("[ERROR] Exception occurred:")
-        traceback.print_exc()
+        # result is already a dict with keys "claims" and "verdicts"
+        return jsonify(result), 200
+    except ValueError as e:
         return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        return jsonify({"error": f"Internal error: {e}"}), 500
 
-@app.route("/debug")
-def debug():
-    return jsonify({
-        "status": "ok",
-        "youtube_api_key": bool(os.environ.get("YOUTUBE_API_KEY")),
-        "genai_configured": hasattr(genai, "Client")
-    })
-
-
-# Optional: remove this block if using gunicorn
 if __name__ == "__main__":
-    import os
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=True)
+    port = int(os.environ.get("PORT", 8080))
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    app.run(host="0.0.0.0", port=port, debug=debug)
