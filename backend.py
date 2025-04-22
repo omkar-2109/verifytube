@@ -2,73 +2,51 @@ import os
 import re
 import json
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
-from googleapiclient.discovery import build
 import google.generativeai as genai
 
-# Load YouTube Data API key from env
-YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
-
-# Configure Vertex AI
-GENAI_PROJECT  = os.environ.get("GCP_PROJECT", "skillful-cider-451510-j7")
+# Vertex AI configuration
+GENAI_PROJECT  = os.environ.get("GCP_PROJECT",  "skillful-cider-451510-j7")
 GENAI_LOCATION = os.environ.get("GCP_LOCATION", "us-central1")
 
 def get_video_id(url: str) -> str | None:
-    """Extract the 11‐char YouTube video ID from a URL."""
-    pattern = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
-    m = re.search(pattern, url)
+    """Extract the 11‑char YouTube video ID."""
+    m = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
     return m.group(1) if m else None
 
 def get_transcript(video_id: str) -> str | None:
-    """Try official YouTube Transcript API (auto or manual subs)."""
-    try:
-        subs = YouTubeTranscriptApi.get_transcript(video_id, languages=["en-US"])
-        return " ".join(entry["text"] for entry in subs)
-    except TranscriptsDisabled:
-        return None
-    except Exception:
-        # fallback to Hindi or any
+    """
+    Uses youtube-transcript-api to fetch English auto‑sub or manual sub.
+    Returns the joined text or None.
+    """
+    for lang in ["en", "en-US", "hi"]:
         try:
-            subs = YouTubeTranscriptApi.get_transcript(video_id, languages=["hi"])
+            subs = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang])
             return " ".join(entry["text"] for entry in subs)
-        except Exception:
+        except TranscriptsDisabled:
+            # auto‑sub disabled, try next
             return None
-
-def get_transcript_youtube_api(video_id: str) -> str | None:
-    """Use YouTube Data v3 to list & download captions (requires OAuth)."""
-    if not YOUTUBE_API_KEY:
-        return None
-
-    yt = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-    resp = yt.captions().list(part="snippet", videoId=video_id).execute()
-    items = resp.get("items", [])
-    if not items:
-        return None
-
-    caption_id = items[0]["id"]
-    # This call requires OAuth; with API key only it will error out
-    try:
-        dl = yt.captions().download(id=caption_id).execute()
-        return dl.decode("utf-8")
-    except Exception:
-        return None
+        except Exception:
+            # no manual or auto for this lang, try next
+            continue
+    return None
 
 def generate_fact_check(transcript: str) -> dict:
     """
-    Call Gemini to extract and verify claims.
-    Returns a Python dict: {"claims": [...], "verdicts": [...]}
+    Calls Gemini to extract & verify claims.
+    Returns a dict: {"claims": [...], "verdicts": [...]}
     """
     client = genai.Client(
         vertexai=True,
         project=GENAI_PROJECT,
-        location=GENAI_LOCATION,
+        location=GENAI_LOCATION
     )
 
     prompt = f"""
-You are a fact‑checking AI. From the transcript below, extract ONLY news-related claims,
+You are a fact‑checking AI. From the transcript below, extract ONLY news‑related claims,
 verify each claim’s accuracy, and output EXACTLY a JSON object:
 
 {{
-  "claims": ["..."],
+  "claims": ["…"],
   "verdicts": ["true"|"false"|"misleading"|…]
 }}
 
@@ -89,23 +67,20 @@ Transcript:
         max_output_tokens=4096,
         response_modalities=["TEXT"],
         tools=tools,
-        system_instruction=[genai.types.Part.from_text("You are a precise fact-checker.")]
+        system_instruction=[genai.types.Part.from_text("You are a precise fact‑checker.")]
     )
 
-    # Stream the response into one string
-    text_out = ""
+    # collect the streamed text
+    out = ""
     for chunk in client.models.generate_content_stream(
         model="gemini-2.5-pro-exp-03-25",
         contents=contents,
         config=cfg
     ):
-        text_out += chunk.text
+        out += chunk.text
 
-    # Attempt to parse into JSON
+    # parse to JSON
     try:
-        return json.loads(text_out.strip())
+        return json.loads(out.strip())
     except json.JSONDecodeError as e:
-        # If the model’s output was slightly malformed, you could
-        # try some cleanup here. For now, bubble up an error.
-        raise ValueError(f"Invalid JSON from AI: {e}\n\nOutput was:\n{text_out}")
-
+        raise ValueError(f"Invalid JSON from AI: {e}\nOutput was:\n{out}")
